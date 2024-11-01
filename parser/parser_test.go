@@ -1,11 +1,12 @@
 package parser_test
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/thacuber2a03/cymbal/ast"
 	"github.com/thacuber2a03/cymbal/lexer"
 	"github.com/thacuber2a03/cymbal/parser"
-	"github.com/thacuber2a03/cymbal/ast"
 )
 
 func parseProgram(t *testing.T, source string) *ast.Program {
@@ -13,7 +14,7 @@ func parseProgram(t *testing.T, source string) *ast.Program {
 	p := parser.New(l)
 	prog := p.Parse()
 
-	if prog == nil {
+	if prog == nil || len(p.Errors) != 0 {
 		t.Errorf("parser failed with %d errors", len(p.Errors))
 		for _, e := range p.Errors {
 			t.Error(e)
@@ -22,6 +23,13 @@ func parseProgram(t *testing.T, source string) *ast.Program {
 	}
 
 	return prog
+}
+
+func parseExpression(t *testing.T, expr string) ast.Expression {
+	prog := parseProgram(t, fmt.Sprintf("main { deo 0x18, (%s) }", expr))
+	main := prog.Declarations[0].(*ast.MainDecl)
+	deo := main.Statements[0].(*ast.DEOStatement)
+	return deo.Value
 }
 
 func matchLiteral(t *testing.T, e ast.Expression, n string, v int16) bool {
@@ -61,6 +69,24 @@ func TestBasicParsing(t *testing.T) {
 			main.Statements[0])
 	}
 
-	if !matchLiteral(t, deo.Port, "Port", 0x18) { return }
-	if !matchLiteral(t, deo.Value, "Value", int16('a')) { return }
+	if !matchLiteral(t, deo.Port, "Port", 0x18) {
+		return
+	}
+	if !matchLiteral(t, deo.Value, "Value", int16('a')) {
+		return
+	}
+}
+
+func TestExpressionParsing(t *testing.T) {
+	tests := []struct{ expression, expected string }{
+		{"1 + 2 * 3", "(1 + (2 * 3))"},
+	}
+
+	for _, tt := range tests {
+		e := parseExpression(t, tt.expression)
+		if s := e.String(); s != tt.expected {
+			t.Errorf("expression '%s' not parsed correctly, expected %s but got %s",
+				tt.expression, tt.expected, s)
+		}
+	}
 }

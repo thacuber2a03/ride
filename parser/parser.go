@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/thacuber2a03/cymbal/lexer"
 	"github.com/thacuber2a03/cymbal/ast"
+	"github.com/thacuber2a03/cymbal/lexer"
 )
 
 type ParseError struct {
@@ -17,12 +17,33 @@ func (pe *ParseError) Error() string {
 	return fmt.Sprintf("Error at line %d: %s", pe.Token.Line, pe.Message)
 }
 
+type (
+	precedence int // enum
+	infixFn    func(*Parser, ast.Expression) ast.Expression
+	prefixFn   func(*Parser) ast.Expression
+	parseRule  struct {
+		prefix prefixFn
+		infix  infixFn
+		prec   precedence
+	}
+)
+
+const (
+	pNone precedence = iota
+	pTerm
+	pFactor
+	pUnary
+	pPrimary
+)
+
 type Parser struct {
 	*lexer.Lexer
 	curTok, nextTok lexer.Token
 
 	Errors    []ParseError
 	panicMode bool
+
+	parseRules map[lexer.TokenType]parseRule
 }
 
 func (p *Parser) error(tok lexer.Token, msg string) {
@@ -74,28 +95,74 @@ func (p *Parser) expect(tt lexer.TokenType) bool {
 	return true
 }
 
-func (p *Parser) expression() (res ast.Expression) {
-	// TODO(thacuber2a03): insert an actual expression parser here
+func (p *Parser) leftAssoc(left ast.Expression) ast.Expression {
+	t := p.curTok
+	prec := precedence(int(p.parseRules[t.Type].prec) + 1)
+	p.advance()
+	return &ast.Binary{Left: left, Operator: t, Right: p.parsePrecedence(prec)}
+}
 
-	if p.check(lexer.TT_INT) {
+func (p *Parser) literal() ast.Expression {
+	switch p.curTok.Type {
+	case lexer.TT_INT:
 		val, err := strconv.ParseInt(p.curTok.Lexeme, 0, 16)
 		if err != nil {
 			p.error(p.curTok, "integer overflow/underflow")
 			return nil
 		}
+		return &ast.Literal{Value: int16(val)}
+	case lexer.TT_CHAR:
+		// TODO(thacuber2a03): escapes
+		return &ast.Literal{Value: int16(p.curTok.Lexeme[1])}
+	default:
+		panic("unreachable")
+	}
+}
 
-		res = &ast.Literal{Value: int16(val)}
-		p.advance()
-		return
-	} else if p.check(lexer.TT_CHAR) {
-		res = &ast.Literal{Value: int16(p.curTok.Lexeme[1])}
-		p.advance()
+func (p *Parser) grouping() (res ast.Expression) {
+	p.advance()
+	res = p.parsePrecedence(pNone)
+	if !p.check(lexer.TT_RPAREN) {
+		// TODO(thacuber2a03): "...to close off '(' at <pos>..."
+		p.error(p.curTok, "expected ')' after expression")
+		return nil
+	}
+	p.advance()
+	return
+}
+
+// Parses an expression of precedence [prec].
+// Expects the bound functions to not consume its final input.
+func (p *Parser) parsePrecedence(prec precedence) (res ast.Expression) {
+	rule, ok := p.parseRules[p.curTok.Type]
+	if !ok || rule.prefix == nil {
+		p.error(p.curTok, "expected expression")
 		return
 	}
 
-	p.error(p.curTok, "expected expression")
+	if res = rule.prefix(p); res == nil {
+		return
+	}
+
+	for {
+		rule, ok := p.parseRules[p.nextTok.Type]
+		if !ok || prec > rule.prec {
+			break
+		}
+
+		if !p.advance() {
+			return nil
+		}
+		
+		if res = rule.infix(p, res); res == nil {
+			return
+		}
+	}
+
 	return
 }
+
+func (p *Parser) expression() ast.Expression { return p.parsePrecedence(pNone) }
 
 func (p *Parser) deoStmt() *ast.DEOStatement {
 	deo := &ast.DEOStatement{}
@@ -183,4 +250,17 @@ func (p *Parser) Parse() *ast.Program {
 	return prog
 }
 
-func New(l *lexer.Lexer) *Parser { return &Parser{Lexer: l} }
+func New(l *lexer.Lexer) *Parser {
+	return &Parser{
+		Lexer: l,
+		parseRules: map[lexer.TokenType]parseRule{
+			lexer.TT_INT:    {prefix: (*Parser).literal},
+			lexer.TT_CHAR:   {prefix: (*Parser).literal},
+			lexer.TT_LPAREN: {prefix: (*Parser).grouping},
+			lexer.TT_PLUS:   {infix: (*Parser).leftAssoc, prec: pTerm},
+			lexer.TT_MINUS:  {infix: (*Parser).leftAssoc, prec: pTerm},
+			lexer.TT_STAR:   {infix: (*Parser).leftAssoc, prec: pFactor},
+			lexer.TT_SLASH:  {infix: (*Parser).leftAssoc, prec: pFactor},
+		},
+	}
+}

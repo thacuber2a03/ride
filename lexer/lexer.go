@@ -128,7 +128,7 @@ func (l *Lexer) charLit(c byte) Token {
 	}
 
 	if c := l.nextChar(); c == '\\' {
-
+		// TODO(thacuber2a03): escapes
 	} else {
 		lit.WriteByte(c)
 	}

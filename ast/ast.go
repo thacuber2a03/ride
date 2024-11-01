@@ -42,7 +42,7 @@ func (_ *MainDecl) declNode() {}
 // Represents a delimited block of code.
 type Block struct {
 	// The line that the start of the block (the left brace) is located in.
-	Start int
+	// Start int
 
 	Statements []Statement
 }
